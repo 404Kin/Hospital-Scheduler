@@ -21,7 +21,17 @@ This is the foundation. It simulates ONE doctor and ONE clinic day with two simp
 | sim/generator.py | Fake clinic days. Same seed = same day | A |
 | sim/baselines.py | S0 and S1 | B |
 | sim/run_baselines.py | Prints the comparison table | A + B |
+| sim/export_dashboard.py | Writes dashboard/data.js | C |
+| dashboard/index.html | Browser timeline viewer (plain HTML/JS, works offline) | C |
 | tests/test_baselines.py | Basic tests | everyone |
+
+## See it in the browser (no server needed)
+
+    python -m sim.export_dashboard           # refreshes dashboard/data.js
+    # then double-click dashboard/index.html
+
+Pick a day, compare S0 and S1 as timelines. Yellow = waiting in lounge, blue = consultation, red = overtime.
+Person C will later replace data.js with live data from the API.
 
 ## Important simple assumptions (write them in the report)
 

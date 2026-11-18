@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clinic baseline viewer</title>
+<style>
+:root{--bg:#ffffff;--card:#f6f6f3;--text:#1b1b1f;--muted:#6b6b72;--line:#d9d9d4;
+--wait:#f2c46d;--wait-ink:#7a4d00;--consult:#4f7be0;--over:#d9534f;--slot:#8a8a92;--shift:#d9534f;}
+@media (prefers-color-scheme: dark){:root{--bg:#17171a;--card:#212125;--text:#ececef;--muted:#a0a0a8;--line:#3a3a40;
+--wait:#c99a3b;--wait-ink:#f6d99a;--consult:#6c93f0;--over:#ee6f6b;--slot:#9a9aa4;--shift:#ee6f6b;}}
+*{box-sizing:border-box}
+body{margin:0;padding:20px;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:1000px;margin-inline:auto}
+h1{font-size:20px;margin:0 0 4px} h2{font-size:15px;margin:0}
+.sub{color:var(--muted);margin:0 0 16px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+select,button{font:inherit;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--text);cursor:pointer}
+button:hover,select:hover{border-color:var(--muted)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+.head{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px}
+.chip b{font-weight:600}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-bottom:12px}
+.legend i{display:inline-block;width:14px;height:9px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.chart{position:relative}
+.axis{position:relative;height:18px;margin-left:100px;font-size:11px;color:var(--muted)}
+.axis span{position:absolute;transform:translateX(-50%)}
+.rows{position:relative}
+.row{display:flex;align-items:center;height:24px}
+.lab{width:100px;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:6px}
+.track{position:relative;flex:1;height:100%;border-top:1px solid var(--line)}
+.seg{position:absolute;top:4px;height:16px;border-radius:3px}
+.w{background:var(--wait)} .c{background:var(--consult)} .o{background:var(--over)}
+.slot{top:2px;height:20px;border:1.5px dashed var(--slot);background:transparent}
+.grid{position:absolute;top:0;bottom:0;width:1px;background:var(--line);opacity:.6}
+.shift{position:absolute;top:-2px;bottom:0;width:2px;background:var(--shift)}
+.shiftlab{position:absolute;top:-16px;font-size:11px;color:var(--shift);transform:translateX(-50%)}
+.note{margin:10px 0 0;font-size:13px}
+table{border-collapse:collapse;width:100%;font-size:13px} th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right} th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:500}
+</style>
+</head>
+<body>
+<h1>Clinic baseline viewer</h1>
+<p class="sub">One doctor, 10 patients, 09:00 to 12:00. Pick a day and compare the two baseline strategies. Nothing here is AI yet; this is the "before" picture.</p>
+
+<div class="bar">
+  <label for="day">Day (seed)</label>
+  <select id="day"></select>
+  <button id="prev">&larr; Prev</button>
+  <button id="next">Next &rarr;</button>
+  <button id="worst">Show worst day</button>
+  <button id="best">Show best day</button>
+</div>
+
+<div class="legend">
+  <span><i style="background:var(--wait)"></i>Waiting in lounge</span>
+  <span><i style="background:var(--consult)"></i>Consultation</span>
+  <span><i style="background:var(--over)"></i>Overtime (after 12:00)</span>
+  <span><i style="border:1.5px dashed var(--slot)"></i>Promised slot</span>
+</div>
+
+<div id="s0"></div>
+<div id="s1"></div>
+
+<div class="card">
+  <h2>Average over all 30 days</h2>
+  <table id="summary"></table>
+  <p class="note" style="color:var(--muted)">All numbers in minutes. Our AI system must beat S1, not only S0.</p>
+</div>
+
+<script src="data.js"></script>
+<script>
+const D = window.DATA;
+const SS = D.shift_start, SE = D.shift_end, MIN_T = 8*60+30;
+const NAMES = {S0:"S0  Static slots (no updates)", S1:"S1  Shift-all with alerts"};
+const hhmm = m => String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0");
+const el = (tag, cls, txt) => { const e=document.createElement(tag); if(cls) e.className=cls; if(txt!==undefined) e.textContent=txt; return e; };
+const seeds = Object.keys(D.days).map(Number);
+let current = seeds[0];
+
+function maxTime(day){
+  const ends = ["S0","S1"].flatMap(k => day[k].patients.map(p => p.end));
+  return Math.ceil((Math.max(SE, ...ends) + 5) / 30) * 30;
+}
+
+function seg(cls, a, b, maxT, title){
+  const d = el("div", "seg " + cls);
+  d.style.left = ((a-MIN_T)/(maxT-MIN_T)*100) + "%";
+  d.style.width = Math.max(0.2, (b-a)/(maxT-MIN_T)*100) + "%";
+  if (title) d.title = title;
+  return d;
+}
+
+function chart(key, day, maxT){
+  const data = day[key], m = data.metrics;
+  const card = el("div","card");
+  const head = el("div","head");
+  head.append(el("h2","",NAMES[key]));
+  const chips = el("div","chips");
+  [["avg wait", m.avg_wait.toFixed(1)],["p90 wait", m.p90_wait],["overtime", m.overtime],["doctor idle", m.idle]].forEach(([k,v])=>{
+    const c = el("span","chip"); c.append(k+" "); c.append(Object.assign(el("b"),{textContent:v+" min"})); chips.append(c);
+  });
+  head.append(chips); card.append(head);
+
+  const ch = el("div","chart");
+  const axis = el("div","axis");
+  for (let t = Math.ceil(MIN_T/30)*30; t <= maxT; t += 30){
+    const s = el("span","",hhmm(t)); s.style.left = ((t-MIN_T)/(maxT-MIN_T)*100)+"%"; axis.append(s);
+  }
+  ch.append(axis);
+  const rows = el("div","rows");
+  data.patients.forEach(p=>{
+    const r = el("div","row");
+    r.append(el("div","lab","P"+p.id+" "+p.visit_type.replace("_"," ")));
+    const tr = el("div","track");
+    for (let t = Math.ceil(MIN_T/30)*30; t <= maxT; t += 30){
+      const g = el("div","grid"); g.style.left = ((t-MIN_T)/(maxT-MIN_T)*100)+"%"; tr.append(g);
+    }
+    const tip = `Patient ${p.id} (${p.visit_type}, age ${p.age})\nplanned ${p.planned_min} min, real ${p.real_min} min\npromised ${hhmm(p.original_start)}, arrived ${hhmm(p.arrival)}\nconsult ${hhmm(p.start)} to ${hhmm(p.end)}\nlounge wait ${p.start-p.arrival} min`;
+    tr.append(seg("slot", p.original_start, p.original_start+p.planned_min, maxT, tip));
+    tr.append(seg("w", p.arrival, p.start, maxT, tip));
+    if (p.end <= SE) tr.append(seg("c", p.start, p.end, maxT, tip));
+    else if (p.start >= SE) tr.append(seg("o", p.start, p.end, maxT, tip));
+    else { tr.append(seg("c", p.start, SE, maxT, tip)); tr.append(seg("o", SE, p.end, maxT, tip)); }
+    r.append(tr); rows.append(r);
+  });
+  const lines = el("div"); lines.style.cssText = "position:absolute;left:100px;right:0;top:0;bottom:0;pointer-events:none";
+  const sl = el("div","shift"); sl.style.left = ((SE-MIN_T)/(maxT-MIN_T)*100)+"%"; lines.append(sl);
+  rows.append(lines);
+  ch.append(rows); card.append(ch);
+  return card;
+}
+
+function render(seed){
+  current = seed;
+  document.getElementById("day").value = seed;
+  const day = D.days[seed], maxT = maxTime(day);
+  const s0 = document.getElementById("s0"), s1 = document.getElementById("s1");
+  s0.replaceChildren(chart("S0", day, maxT));
+  s1.replaceChildren(chart("S1", day, maxT));
+  const a = day.S0.metrics, b = day.S1.metrics;
+  const note = el("p","note");
+  note.textContent = `Day ${seed}: alerts cut the average lounge wait from ${a.avg_wait.toFixed(1)} to ${b.avg_wait.toFixed(1)} min, but doctor overtime stays ${a.overtime} vs ${b.overtime} min. Red line = 12:00 shift end.`;
+  s1.firstChild.append(note);
+}
+
+function summary(){
+  const t = document.getElementById("summary");
+  const cols = [["avg_wait","Avg wait"],["p90_wait","P90 wait"],["overtime","Overtime"],["idle","Doctor idle"]];
+  const head = el("tr"); head.append(el("th","","Strategy")); cols.forEach(c=>head.append(el("th","",c[1]))); t.append(head);
+  ["S0","S1"].forEach(k=>{
+    const r = el("tr"); r.append(el("td","",NAMES[k]));
+    cols.forEach(c=>r.append(el("td","",D.summary[k][c[0]].toFixed(1)))); t.append(r);
+  });
+}
+
+const sel = document.getElementById("day");
+seeds.forEach(s => { const o = el("option","","Day "+s+"  (S0 overtime "+D.days[s].S0.metrics.overtime+" min)"); o.value = s; sel.append(o); });
+sel.onchange = () => render(Number(sel.value));
+document.getElementById("prev").onclick = () => render(seeds[(seeds.indexOf(current)-1+seeds.length)%seeds.length]);
+document.getElementById("next").onclick = () => render(seeds[(seeds.indexOf(current)+1)%seeds.length]);
+document.getElementById("worst").onclick = () => render(seeds.reduce((a,b)=>D.days[b].S0.metrics.overtime>D.days[a].S0.metrics.overtime?b:a));
+document.getElementById("best").onclick = () => render(seeds.reduce((a,b)=>D.days[b].S0.metrics.avg_wait<D.days[a].S0.metrics.avg_wait?b:a));
+summary();
+render(seeds.reduce((a,b)=>D.days[b].S0.metrics.overtime>D.days[a].S0.metrics.overtime?b:a));
+</script>
+</body>
+</html>
